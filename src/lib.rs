@@ -1,4 +1,6 @@
 use anyhow::Result;
+use huffman::HuffmanCodeGenerator;
+mod huffman;
 
 /// Compresses bits
 pub fn deflate(bytes: &[u8]) -> Result<Vec<u8>> {
@@ -19,7 +21,43 @@ pub fn deflate(bytes: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn deflate_block_fixed_compression(bytes: &[u8]) -> Result<Vec<u8>> {
-    todo!()
+    let hfgen = HuffmanCodeGenerator::new_fixed();
+    let mut result = vec![];
+    let mut last_b_offset = 0;
+    let mut last_byte: u8 = 0;
+
+    for b in bytes {
+        let i = *b as usize;
+        let code = hfgen.code(i);
+        let mut code_left_to_apply_len = hfgen.code_len(i);
+        while code_left_to_apply_len > 0 {
+            let possible_next_offset = last_b_offset + code_left_to_apply_len;
+            if possible_next_offset >= 8 {
+                let b_to_move = last_b_offset + code_left_to_apply_len - 8;
+                let shifted_code = (code >> b_to_move) as u8;
+                last_byte = last_byte | shifted_code;
+
+                let left_code = possible_next_offset - 8;
+                code_left_to_apply_len = left_code;
+                result.push(last_byte);
+                last_byte = 0;
+                last_b_offset = 0;
+            } else {
+                // code can be fully applied
+
+                let b_to_move = 8 - possible_next_offset;
+                let shifted_code = (code << b_to_move) as u8;
+                last_byte = last_byte | shifted_code;
+                code_left_to_apply_len = 0;
+
+                last_b_offset = possible_next_offset;
+            }
+        }
+    }
+    if last_byte != 0 {
+        result.push(last_byte);
+    }
+    Ok(result)
 }
 
 fn deflate_block_no_compression(bytes: &[u8]) -> Result<Vec<u8>> {
@@ -75,6 +113,16 @@ fn inflate_no_compression(bytes: &[u8]) -> Result<(usize, Vec<u8>)> {
 }
 
 fn inflate_block_fixed_compression(bytes: &[u8]) -> Result<(usize, Vec<u8>)> {
+    // let huffman_consumer = HuffmanConsumer::new(bytes);
+    // let mut result = vec![];
+    // while let Some(value) = huffman_consumer.next() {
+    //     if value == 256 {
+    //         break;
+    //     }
+    //     if value < 256 {
+    //         ;
+    //     }
+    // }
     todo!()
 }
 
