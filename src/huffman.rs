@@ -4,11 +4,11 @@ pub struct HuffmanCodeGenerator {
 impl HuffmanCodeGenerator {
     pub fn new_fixed() -> Self {
         let mut lits = vec![0; 288];
-        let mut code = 0;
+        let mut code: u32 = 0;
         let mut min_code = [0u32; 10];
         for i in 1..=9 {
             code = (code + HuffmanCodeGenerator::fixed_bl_count(i - 1)) << 1;
-            min_code[i] = code as u32;
+            min_code[i] = code;
         }
         for i in 0..288 {
             let len = HuffmanCodeGenerator::fixed_bl_len(i) as usize;
@@ -42,7 +42,7 @@ impl HuffmanCodeGenerator {
         }
     }
 
-    const fn fixed_bl_count(i: usize) -> u8 {
+    const fn fixed_bl_count(i: usize) -> u32 {
         match i {
             7 => 24,
             8 => 144 + 8,

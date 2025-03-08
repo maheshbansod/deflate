@@ -47,7 +47,7 @@ fn deflate_block_fixed_compression(bytes: &[u8]) -> Result<Vec<u8>> {
 
                 let b_to_move = 8 - possible_next_offset;
                 let shifted_code = (code << b_to_move) as u8;
-                last_byte = last_byte | shifted_code;
+                last_byte |= shifted_code;
                 code_left_to_apply_len = 0;
 
                 last_b_offset = possible_next_offset;
@@ -55,8 +55,13 @@ fn deflate_block_fixed_compression(bytes: &[u8]) -> Result<Vec<u8>> {
         }
     }
     if last_byte != 0 {
+        let end_byte_start = 1 << (7 - last_b_offset);
+        last_byte |= end_byte_start;
         result.push(last_byte);
+    } else {
+        result.push(128);
     }
+    result.push(0);
     Ok(result)
 }
 
@@ -166,6 +171,9 @@ mod test {
         let s = "a very normal string";
         let s_bytes = s.as_bytes();
         let d = deflate_block_fixed_compression(s_bytes)?;
+        for i in d.iter() {
+            println!("{:b}", i);
+        }
         let (consumed, s2_bytes) = inflate_block_fixed_compression(&d)?;
         assert_eq!(s_bytes, s2_bytes);
         assert_eq!(d.len(), consumed);
