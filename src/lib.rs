@@ -21,8 +21,9 @@ pub fn deflate(bytes: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn deflate_block_fixed_compression(bytes: &[u8]) -> Result<Vec<u8>> {
+    let header = 0x20;
     let hfgen = HuffmanCodeGenerator::new_fixed();
-    let mut result = vec![];
+    let mut result = vec![header];
     let mut last_b_offset = 0;
     let mut last_byte: u8 = 0;
 
@@ -55,13 +56,12 @@ fn deflate_block_fixed_compression(bytes: &[u8]) -> Result<Vec<u8>> {
         }
     }
     if last_byte != 0 {
-        let end_byte_start = 1 << (7 - last_b_offset);
+        let end_byte_start = 0 << (7 - last_b_offset);
         last_byte |= end_byte_start;
         result.push(last_byte);
     } else {
-        result.push(128);
+        result.push(0);
     }
-    result.push(0);
     Ok(result)
 }
 
@@ -89,20 +89,23 @@ const fn top_half_16(n: u16) -> u8 {
     ((n & 0xff00) >> 8) as u8
 }
 
+const fn btype_from_byte(b: u8) -> Btype {
+    get_btype((b & 0x60) >> 5)
+}
+
 pub fn inflate(bytes: &[u8]) -> Result<Vec<u8>> {
     let mut output = vec![];
     let mut bstart = 0;
     loop {
         let is_final_block = (bytes[bstart] & 0x80) != 0;
-        let btype = (bytes[bstart] & 0x60) >> 5;
-        let btype = get_btype(btype);
+        let btype = btype_from_byte(bytes[bstart]);
         let remaining_bytes = &bytes[(bstart + 1)..];
         let (consumed, block) = match btype {
             Btype::NoCompression => inflate_no_compression(remaining_bytes)?,
             Btype::CompressedFixed => inflate_block_fixed_compression(remaining_bytes)?,
             _ => todo!(),
         };
-        bstart += consumed;
+        bstart += consumed + 1;
         output.extend_from_slice(&block);
         if is_final_block {
             break;
@@ -114,23 +117,43 @@ pub fn inflate(bytes: &[u8]) -> Result<Vec<u8>> {
 fn inflate_no_compression(bytes: &[u8]) -> Result<(usize, Vec<u8>)> {
     let len: usize = bytes[0] as usize * 256 + bytes[1] as usize;
     let data = &bytes[4..];
-    Ok((len, data[..len].to_vec()))
+    Ok((len + 4, data[..len].to_vec()))
 }
 
 fn inflate_block_fixed_compression(bytes: &[u8]) -> Result<(usize, Vec<u8>)> {
-    // let huffman_consumer = HuffmanConsumer::new(bytes);
-    // let mut result = vec![];
-    // while let Some(value) = huffman_consumer.next() {
-    //     if value == 256 {
-    //         break;
-    //     }
-    //     if value < 256 {
-    //         ;
-    //     }
-    // }
-    todo!()
+    let hfgen = HuffmanCodeGenerator::new_fixed();
+    let mut current_byte_index = 0;
+    let mut current_code: u16 = 0;
+    let mut current_code_len = 0;
+    let mut current_byte = bytes[current_byte_index];
+    let mut current_byte_consumed_len = 0;
+    let mut result = vec![];
+    loop {
+        let current_bit = (current_byte & 0x80) >> 7;
+        current_code = current_code << 1;
+        current_code = current_code | (current_bit as u16);
+        current_byte <<= 1;
+        current_byte_consumed_len += 1;
+        current_code_len += 1;
+        if let Some(value) = hfgen.get_code_value(current_code, current_code_len) {
+            if value == 256 {
+                break;
+            }
+            let value = value as u8;
+            result.push(value);
+            current_code_len = 0;
+            current_code = 0;
+        }
+        if current_byte_consumed_len == 8 {
+            current_byte_consumed_len = 0;
+            current_byte_index += 1;
+            current_byte = bytes[current_byte_index];
+        }
+    }
+    Ok((current_byte_index + 1, result))
 }
 
+#[derive(Debug, PartialEq)]
 enum Btype {
     NoCompression,
     CompressedFixed,
@@ -143,7 +166,7 @@ const fn get_btype(bits: u8) -> Btype {
         1 => Btype::CompressedFixed,
         2 => Btype::CompressedDynamic,
         3 => Btype::Reserved,
-        _ => panic!("shouldn't be a possible for a btype to be this big"),
+        _ => panic!("shouldn't be possible for a btype to be this big"),
     }
 }
 
@@ -152,8 +175,8 @@ mod test {
     use anyhow::Result;
 
     use crate::{
-        deflate, deflate_block_fixed_compression, deflate_block_no_compression, inflate,
-        inflate_block_fixed_compression,
+        Btype, btype_from_byte, deflate, deflate_block_fixed_compression,
+        deflate_block_no_compression, inflate, inflate_block_fixed_compression,
     };
 
     #[test]
@@ -171,12 +194,12 @@ mod test {
         let s = "a very normal string";
         let s_bytes = s.as_bytes();
         let d = deflate_block_fixed_compression(s_bytes)?;
-        for i in d.iter() {
-            println!("{:b}", i);
-        }
-        let (consumed, s2_bytes) = inflate_block_fixed_compression(&d)?;
+        let header = d[0];
+        assert_eq!(btype_from_byte(header), Btype::CompressedFixed);
+        let bytes_without_header = &d[1..];
+        let (consumed, s2_bytes) = inflate_block_fixed_compression(&bytes_without_header)?;
         assert_eq!(s_bytes, s2_bytes);
-        assert_eq!(d.len(), consumed);
+        assert_eq!(bytes_without_header.len(), consumed);
         Ok(())
     }
 
