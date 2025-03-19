@@ -177,6 +177,7 @@ mod test {
     use crate::{
         Btype, btype_from_byte, deflate, deflate_block_fixed_compression,
         deflate_block_no_compression, inflate, inflate_block_fixed_compression,
+        inflate_no_compression,
     };
 
     const SIMPLE_STR: &str = "a very normal string. some might say it's the normalest string you've ever seen
@@ -188,8 +189,11 @@ mod test {
         let s = SIMPLE_STR;
         let s_bytes = s.as_bytes();
         let d = deflate_block_no_compression(s_bytes)?;
-        let s2_bytes = &d[5..];
-        assert_eq!(s_bytes, s2_bytes);
+        let bytes_without_header = &d[1..];
+        let (consumed, got) = inflate_no_compression(bytes_without_header)?;
+        assert_eq!(consumed, bytes_without_header.len());
+        let got = std::str::from_utf8(&got)?;
+        assert_eq!(s, got);
         Ok(())
     }
 
