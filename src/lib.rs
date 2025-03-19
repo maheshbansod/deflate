@@ -179,9 +179,13 @@ mod test {
         deflate_block_no_compression, inflate, inflate_block_fixed_compression,
     };
 
+    const SIMPLE_STR: &str = "a very normal string. some might say it's the normalest string you've ever seen
+        but ok to be honest, we're not 100% sure bout that. there is still some ongoing research. but we're
+        kinda sorta right there. almost there. i can say this is a very normal string confidently.";
+
     #[test]
     fn no_compression() -> Result<()> {
-        let s = "a very normal string";
+        let s = SIMPLE_STR;
         let s_bytes = s.as_bytes();
         let d = deflate_block_no_compression(s_bytes)?;
         let s2_bytes = &d[5..];
@@ -191,7 +195,7 @@ mod test {
 
     #[test]
     fn fixed_compression() -> Result<()> {
-        let s = "a very normal string";
+        let s = SIMPLE_STR;
         let s_bytes = s.as_bytes();
         let d = deflate_block_fixed_compression(s_bytes)?;
         let header = d[0];
@@ -205,7 +209,7 @@ mod test {
 
     #[test]
     fn sanity() -> Result<()> {
-        let s = "a very normal string";
+        let s = SIMPLE_STR;
         let s_bytes = s.as_bytes();
         let d = deflate(s_bytes)?;
         // assert!(d.len() < s.as_bytes().len());
