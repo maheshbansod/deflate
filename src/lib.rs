@@ -16,8 +16,12 @@ pub fn deflate(bytes: &[u8]) -> Result<Vec<u8>> {
     blocks.push(block);
 
     let last_index = blocks.len() - 1;
-    blocks[last_index][0] = blocks[last_index][0] | 0x80; //=> mark as final block
+    blocks[last_index][0] = blocks[last_index][0] | 0x01; //=> mark as final block
     Ok(blocks.into_iter().flatten().collect())
+}
+
+fn deflate_block_with_compression(bytes: &[u8]) -> Result<Vec<u8>> {
+    todo!()
 }
 
 fn deflate_block_fixed_compression(bytes: &[u8]) -> Result<Vec<u8>> {
@@ -72,10 +76,10 @@ fn deflate_block_no_compression(bytes: &[u8]) -> Result<Vec<u8>> {
     let nlen = !bytes.len() as u16;
     let mut data = vec![
         header,
-        top_half_16(len),
         bottom_half_16(len),
-        top_half_16(nlen),
+        top_half_16(len),
         bottom_half_16(nlen),
+        top_half_16(nlen),
     ];
     data.extend_from_slice(&bytes);
     Ok(data)
@@ -97,14 +101,19 @@ pub fn inflate(bytes: &[u8]) -> Result<Vec<u8>> {
     let mut output = vec![];
     let mut bstart = 0;
     loop {
-        let is_final_block = (bytes[bstart] & 0x80) != 0;
+        let is_final_block = (bytes[bstart] & 0x01) != 0;
         let btype = btype_from_byte(bytes[bstart]);
+        println!("Btype: {btype:?}");
+        for b in bytes {
+            print!("{b:b} ");
+        }
         let remaining_bytes = &bytes[(bstart + 1)..];
         let (consumed, block) = match btype {
             Btype::NoCompression => inflate_no_compression(remaining_bytes)?,
             Btype::CompressedFixed => inflate_block_fixed_compression(remaining_bytes)?,
             _ => todo!(),
         };
+        println!("{consumed}");
         bstart += consumed + 1;
         output.extend_from_slice(&block);
         if is_final_block {
@@ -115,7 +124,7 @@ pub fn inflate(bytes: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn inflate_no_compression(bytes: &[u8]) -> Result<(usize, Vec<u8>)> {
-    let len: usize = bytes[0] as usize * 256 + bytes[1] as usize;
+    let len: usize = bytes[0] as usize * 1 + bytes[1] as usize * 256;
     let data = &bytes[4..];
     Ok((len + 4, data[..len].to_vec()))
 }
@@ -147,6 +156,9 @@ fn inflate_block_fixed_compression(bytes: &[u8]) -> Result<(usize, Vec<u8>)> {
         if current_byte_consumed_len == 8 {
             current_byte_consumed_len = 0;
             current_byte_index += 1;
+            if current_byte_index >= bytes.len() {
+                break;
+            }
             current_byte = bytes[current_byte_index];
         }
     }

@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.97"
+huffman = { git = "https://github.com/maheshbansod/huffman-rs.git", version = "0.1.0" }
