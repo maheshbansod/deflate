@@ -6,14 +6,14 @@ if (import.meta.main) {
     I am a text fan aaaahhh.. I"m a text fan. I need just text. Gimme the text! Gimme.`;
   deflateRaw(
     originalText,
-    { level: constants.Z_NO_COMPRESSION },
+    { strategy: constants.Z_FIXED },
     async (e, r) => {
       if (e) {
         return;
       }
       console.log("boutta wrte");
       try {
-        await Deno.writeFile("test_data/nocompression-deflate2.deflate", r)
+        await Deno.writeFile("test_data/fixed-comp-deflate.deflate", r)
           .catch(
             console.log,
           );
