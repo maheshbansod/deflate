@@ -5,16 +5,16 @@ mod huffman;
 /// Compresses bits
 pub fn deflate(bytes: &[u8]) -> Result<Vec<u8>> {
     // arbitrary -> let's think on this later
-    // let n_blocks = 2;
-    // let block_size = bytes.len() / n_blocks;
+    let n_blocks = 2;
+    let block_size = bytes.len() / n_blocks;
     let mut blocks = vec![];
-    // let part1 = &bytes[0..block_size];
-    // let block = deflate_block_no_compression(part1)?;
-    // blocks.push(block);
-    // let part2 = &bytes[block_size..];
-    // let block = deflate_block_fixed_compression(part2)?;
-    let part = &bytes[0..bytes.len()];
-    let block = deflate_block_fixed_compression(part)?;
+    let part1 = &bytes[0..block_size];
+    let block = deflate_block_no_compression(part1)?;
+    blocks.push(block);
+    let part2 = &bytes[block_size..];
+    let block = deflate_block_fixed_compression(part2)?;
+    // let part = &bytes[0..bytes.len()];
+    // let block = deflate_block_fixed_compression(part)?;
     blocks.push(block);
 
     let last_index = blocks.len() - 1;
@@ -33,12 +33,11 @@ fn deflate_block_fixed_compression(bytes: &[u8]) -> Result<Vec<u8>> {
     let mut last_byte: u8 = header;
     let mut last_b_offset = 3;
 
-    for (b_index, b) in bytes.iter().enumerate() {
+    for (_, b) in bytes.iter().enumerate() {
         let i = *b as usize;
         let code = hfgen.code(i);
         let mut code_left_to_apply_len = hfgen.code_len(i);
         let mut code = code.reverse_bits() >> (16 - code_left_to_apply_len);
-        // println!("clen: {code_left_to_apply_len}, code: {code:b}");
         while code_left_to_apply_len > 0 {
             let possible_next_offset = last_b_offset + code_left_to_apply_len;
             if possible_next_offset >= 8 {
@@ -49,12 +48,7 @@ fn deflate_block_fixed_compression(bytes: &[u8]) -> Result<Vec<u8>> {
                 let left_code = possible_next_offset - 8;
                 code_left_to_apply_len = left_code;
                 result.push(last_byte);
-                if result.len() == 14 || result.len() == 13 {
-                    println!(
-                        "l:{},byte: {last_byte:b},code:{code:b},for:{i}at{b_index}",
-                        result.len()
-                    );
-                }
+                if (0..20).contains(&result.len()) {}
                 code = code >> (8 - b_to_move);
                 last_byte = 0;
                 last_b_offset = 0;
@@ -71,9 +65,10 @@ fn deflate_block_fixed_compression(bytes: &[u8]) -> Result<Vec<u8>> {
         }
     }
     if last_byte != 0 {
-        let end_byte_start = 0 << (7 - last_b_offset);
+        let end_byte_start = 0 << last_b_offset;
         last_byte |= end_byte_start;
         result.push(last_byte);
+        result.push(0);
     } else {
         result.push(0);
     }
@@ -114,17 +109,12 @@ pub fn inflate(bytes: &[u8]) -> Result<Vec<u8>> {
     loop {
         let is_final_block = (bytes[bstart] & 0x01) != 0;
         let btype = btype_from_byte(bytes[bstart]);
-        println!("Btype: {btype:?}");
-        for b in bytes {
-            print!("{b:b} ");
-        }
         let remaining_bytes = &bytes[bstart..];
         let (consumed, block) = match btype {
-            Btype::NoCompression => inflate_no_compression(remaining_bytes)?,
+            Btype::NoCompression => inflate_no_compression(remaining_bytes, bstart + 1)?,
             Btype::CompressedFixed => inflate_block_fixed_compression(remaining_bytes, 3)?,
             _ => todo!(),
         };
-        println!("{consumed}");
         bstart += consumed + 1;
         output.extend_from_slice(&block);
         if is_final_block {
@@ -134,49 +124,73 @@ pub fn inflate(bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(output)
 }
 
-fn inflate_no_compression(bytes: &[u8]) -> Result<(usize, Vec<u8>)> {
+struct Inflater<'a> {
+    bytes: &'a [u8],
+    consumed_bytes: usize,
+    current_byte_bits_offset: usize,
+    fixed_hf_gen: HuffmanCodeGenerator,
+}
+
+impl<'a> Inflater<'a> {
+    fn new(bytes: &'a [u8], start_bit_offset: usize) -> Self {
+        Self {
+            bytes,
+            consumed_bytes: 0,
+            current_byte_bits_offset: start_bit_offset,
+            fixed_hf_gen: HuffmanCodeGenerator::new_fixed(),
+        }
+    }
+    fn consume_code(&mut self) -> u16 {
+        let mut current_code = 0;
+        let mut code_len = 0;
+        let mut b_idx = self.consumed_bytes;
+        let mut offset = self.current_byte_bits_offset;
+        loop {
+            let current_byte = self.bytes[b_idx];
+            let b_shifted = current_byte >> offset;
+            offset += 1;
+            if offset >= 8 {
+                offset = 0;
+                b_idx += 1;
+            }
+            let current_bit = b_shifted & 1;
+            current_code = current_code << 1;
+            current_code = current_code | (current_bit as u16);
+            code_len += 1;
+            if let Some(value) = self.fixed_hf_gen.get_code_value(current_code, code_len) {
+                self.current_byte_bits_offset = offset;
+                self.consumed_bytes = b_idx;
+                return value;
+            }
+        }
+    }
+}
+
+fn inflate_no_compression(bytes: &[u8], bstart: usize) -> Result<(usize, Vec<u8>)> {
+    let bytes = &bytes[bstart..];
     let len: usize = bytes[0] as usize * 1 + bytes[1] as usize * 256;
     let data = &bytes[4..];
     Ok((len + 4, data[..len].to_vec()))
 }
 
+/// TODO: also add how many bits consumed in the response
 fn inflate_block_fixed_compression(
     bytes: &[u8],
     block_data_start: usize,
 ) -> Result<(usize, Vec<u8>)> {
-    let hfgen = HuffmanCodeGenerator::new_fixed();
-    let mut current_byte_index = 0;
-    let mut current_code: u16 = 0;
-    let mut current_code_len = 0;
-    let mut current_byte = bytes[current_byte_index] >> block_data_start;
-    let mut current_byte_consumed_len = block_data_start;
     let mut result = vec![];
+    let mut inflater = Inflater::new(bytes, block_data_start);
     loop {
-        let current_bit = current_byte & 1;
-        current_code = current_code << 1;
-        current_code = current_code | (current_bit as u16);
-        current_byte >>= 1;
-        current_byte_consumed_len += 1;
-        current_code_len += 1;
-        if let Some(value) = hfgen.get_code_value(current_code, current_code_len) {
-            if value == 256 {
-                break;
-            }
-            let value = value as u8;
-            result.push(value);
-            current_code_len = 0;
-            current_code = 0;
+        let value = inflater.consume_code();
+        if value == 256 {
+            break;
+        } else if value > 256 {
+            todo!()
         }
-        if current_byte_consumed_len == 8 {
-            current_byte_consumed_len = 0;
-            current_byte_index += 1;
-            if current_byte_index >= bytes.len() {
-                break;
-            }
-            current_byte = bytes[current_byte_index];
-        }
+        let value = value as u8;
+        result.push(value);
     }
-    Ok((current_byte_index, result))
+    return Ok((inflater.consumed_bytes + 1, result));
 }
 
 #[derive(Debug, PartialEq)]
@@ -216,7 +230,7 @@ mod test {
         let s_bytes = s.as_bytes();
         let d = deflate_block_no_compression(s_bytes)?;
         let bytes_without_header = &d[1..];
-        let (consumed, got) = inflate_no_compression(bytes_without_header)?;
+        let (consumed, got) = inflate_no_compression(bytes_without_header, 0)?;
         assert_eq!(consumed, bytes_without_header.len());
         let got = std::str::from_utf8(&got)?;
         assert_eq!(s, got);
@@ -227,7 +241,12 @@ mod test {
     fn fixed_compression() -> Result<()> {
         let s = SIMPLE_STR;
         let s_bytes = s.as_bytes();
+        println!("{s_bytes:?}");
         let d = deflate_block_fixed_compression(s_bytes)?;
+        for b in d.iter() {
+            print!("{b:0>8b} ");
+        }
+        println!();
         let header = d[0];
         assert_eq!(btype_from_byte(header), Btype::CompressedFixed);
         let (consumed, s2_bytes) = inflate_block_fixed_compression(&d, 3)?;
