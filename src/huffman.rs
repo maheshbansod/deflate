@@ -11,14 +11,14 @@ impl HuffmanCodeGenerator {
         let mut rev_lits = HashMap::new();
         let mut code: u16 = 0;
         let mut min_code = [0u16; 10];
-        for i in 1..=9 {
+        for (i, mc) in min_code.iter_mut().enumerate().skip(1) {
             code = (code + HuffmanCodeGenerator::fixed_bl_count(i - 1)) << 1;
-            min_code[i] = code;
+            *mc = code;
         }
-        for i in 0..288 {
+        for (i, lit) in lits.iter_mut().enumerate().take(288) {
             let len = HuffmanCodeGenerator::fixed_bl_len(i) as usize;
             if len != 0 {
-                lits[i] = min_code[len];
+                *lit = min_code[len];
                 rev_lits.insert((len as u8, min_code[len]), i as u16);
                 min_code[len] += 1;
             }

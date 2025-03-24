@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use anyhow::Result;
 use huffman::HuffmanCodeGenerator;
 mod huffman;
@@ -18,7 +20,7 @@ pub fn deflate(bytes: &[u8]) -> Result<Vec<u8>> {
     blocks.push(block);
 
     let last_index = blocks.len() - 1;
-    blocks[last_index][0] = blocks[last_index][0] | 0x01; //=> mark as final block
+    blocks[last_index][0] |= 0x01; //=> mark as final block
     Ok(blocks.into_iter().flatten().collect())
 }
 
@@ -33,7 +35,7 @@ fn deflate_block_fixed_compression(bytes: &[u8]) -> Result<Vec<u8>> {
     let mut last_byte: u8 = header;
     let mut last_b_offset = 3;
 
-    for (_, b) in bytes.iter().enumerate() {
+    for b in bytes.iter() {
         let i = *b as usize;
         let code = hfgen.code(i);
         let mut code_left_to_apply_len = hfgen.code_len(i);
@@ -43,12 +45,12 @@ fn deflate_block_fixed_compression(bytes: &[u8]) -> Result<Vec<u8>> {
             if possible_next_offset >= 8 {
                 let b_to_move = last_b_offset + code_left_to_apply_len - 8;
                 let shifted_code = (code << b_to_move) as u8;
-                last_byte = last_byte | shifted_code;
+                last_byte |= shifted_code;
 
                 let left_code = possible_next_offset - 8;
                 code_left_to_apply_len = left_code;
                 result.push(last_byte);
-                code = code >> (8 - b_to_move);
+                code >>= 8 - b_to_move;
                 last_byte = 0;
                 last_b_offset = 0;
             } else {
@@ -86,7 +88,7 @@ fn deflate_block_no_compression(bytes: &[u8]) -> Result<Vec<u8>> {
         bottom_half_16(nlen),
         top_half_16(nlen),
     ];
-    data.extend_from_slice(&bytes);
+    data.extend_from_slice(bytes);
     Ok(data)
 }
 
@@ -144,8 +146,8 @@ impl<'a> Inflater<'a> {
         let mut code_len = 0;
         loop {
             let current_bit = self.consume_bit();
-            current_code = current_code << 1;
-            current_code = current_code | (current_bit as u16);
+            current_code <<= 1;
+            current_code |= current_bit as u16;
             code_len += 1;
             if let Some(value) = self.fixed_hf_gen.get_code_value(current_code, code_len) {
                 return value;
@@ -185,7 +187,7 @@ impl<'a> Inflater<'a> {
 
 fn inflate_no_compression(bytes: &[u8], bstart: usize) -> Result<(usize, Vec<u8>)> {
     let bytes = &bytes[bstart..];
-    let len: usize = bytes[0] as usize * 1 + bytes[1] as usize * 256;
+    let len: usize = (bytes[0] as usize) + bytes[1] as usize * 256;
     let data = &bytes[4..];
     Ok((len + 4, data[..len].to_vec()))
 }
@@ -200,76 +202,79 @@ fn inflate_block_fixed_compression(
     loop {
         let value = inflater.consume_code();
 
-        if value == 256 {
-            break;
-        } else if value > 256 {
-            let l = if (257..265).contains(&value) {
-                (value - 254) as u8
-            } else if (265..269).contains(&value) {
-                let l = ((value - 260) * 2 + 1) as u8;
-                let next_bit = inflater.consume_bits_reversed(1);
-                l + bits_to_u8_msb_first(&next_bit)
-            } else {
-                todo!()
-            };
-            // let dist = inflater.consume_code();
-            let dist = inflater.consume_bits(5);
-            let dist = bits_to_u8_msb_first(&dist);
-            let dist = if (0..4).contains(&dist) {
-                let dist = dist + 1;
-                dist
-            } else if (4..6).contains(&dist) {
-                let dist = dist + (dist - 3);
-                let b = inflater.consume_bits_reversed(1);
-                let dist = dist + bits_to_u8_msb_first(&b);
-                dist
-            } else if (6..8).contains(&dist) {
-                let dist = dist + (dist - 5) * 3;
-                let b = inflater.consume_bits_reversed(2);
-                let dist = dist + bits_to_u8_msb_first(&b);
-                if dist == 11 { 10 } else { dist }
-            } else if (8..10).contains(&dist) {
-                let dist = if dist == 8 { 17 } else { 25 };
-                let b = inflater.consume_bits_reversed(3);
-                let dist = dist + bits_to_u8_msb_first(&b);
-                dist
-            } else if (10..12).contains(&dist) {
-                let dist = if dist == 10 { 33 } else { 49 };
-                let b = inflater.consume_bits_reversed(4);
-                let dist = dist + bits_to_u8_msb_first(&b);
-                dist
-            } else if (12..14).contains(&dist) {
-                let dist = if dist == 12 { 65 } else { 97 };
-                let b = inflater.consume_bits_reversed(5);
-                let dist = dist + bits_to_u8_msb_first(&b);
-                dist
-            } else if (14..16).contains(&dist) {
-                let dist = if dist == 14 { 129 } else { 193 };
-                let b = inflater.consume_bits(6);
-                let dist = dist + bits_to_u8_msb_first(&b);
-                dist
-            } else {
-                todo!()
-            };
-            if dist > 0 {
-                let r_curr_idx = result.len() - dist as usize;
-                for i in r_curr_idx..(r_curr_idx + l as usize) {
-                    result.push(result[i]);
+        match value.cmp(&256) {
+            Ordering::Equal => {
+                break;
+            }
+            Ordering::Greater => {
+                let l = if (257..265).contains(&value) {
+                    (value - 254) as u8
+                } else if (265..269).contains(&value) {
+                    let l = ((value - 260) * 2 + 1) as u8;
+                    let next_bit = inflater.consume_bits_reversed(1);
+                    l + bits_to_u8_msb_first(&next_bit)
+                } else {
+                    todo!()
+                };
+                // let dist = inflater.consume_code();
+                let dist = inflater.consume_bits(5);
+                let dist = bits_to_u8_msb_first(&dist);
+                let dist = if (0..4).contains(&dist) {
+                    dist + 1
+                } else if (4..6).contains(&dist) {
+                    let dist = dist + (dist - 3);
+                    let b = inflater.consume_bits_reversed(1);
+
+                    dist + bits_to_u8_msb_first(&b)
+                } else if (6..8).contains(&dist) {
+                    let dist = dist + (dist - 5) * 3;
+                    let b = inflater.consume_bits_reversed(2);
+                    let dist = dist + bits_to_u8_msb_first(&b);
+                    if dist == 11 { 10 } else { dist }
+                } else if (8..10).contains(&dist) {
+                    let dist = if dist == 8 { 17 } else { 25 };
+                    let b = inflater.consume_bits_reversed(3);
+
+                    dist + bits_to_u8_msb_first(&b)
+                } else if (10..12).contains(&dist) {
+                    let dist = if dist == 10 { 33 } else { 49 };
+                    let b = inflater.consume_bits_reversed(4);
+
+                    dist + bits_to_u8_msb_first(&b)
+                } else if (12..14).contains(&dist) {
+                    let dist = if dist == 12 { 65 } else { 97 };
+                    let b = inflater.consume_bits_reversed(5);
+
+                    dist + bits_to_u8_msb_first(&b)
+                } else if (14..16).contains(&dist) {
+                    let dist = if dist == 14 { 129 } else { 193 };
+                    let b = inflater.consume_bits(6);
+
+                    dist + bits_to_u8_msb_first(&b)
+                } else {
+                    todo!()
+                };
+                if dist > 0 {
+                    let r_curr_idx = result.len() - dist as usize;
+                    for i in r_curr_idx..(r_curr_idx + l as usize) {
+                        result.push(result[i]);
+                    }
                 }
             }
-        } else {
-            let value = value as u8;
-            result.push(value);
+            _ => {
+                let value = value as u8;
+                result.push(value);
+            }
         }
     }
-    return Ok((inflater.consumed_bytes + 1, result));
+    Ok((inflater.consumed_bytes + 1, result))
 }
 
 fn bits_to_u8_msb_first(bits: &[u8]) -> u8 {
     let len = bits.len();
     let mut sum = 0;
-    for i in 0..len {
-        sum |= bits[i] << (len - i - 1);
+    for (i, bit) in bits.iter().enumerate().take(len) {
+        sum |= bit << (len - i - 1);
     }
     sum
 }
