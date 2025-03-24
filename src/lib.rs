@@ -48,7 +48,6 @@ fn deflate_block_fixed_compression(bytes: &[u8]) -> Result<Vec<u8>> {
                 let left_code = possible_next_offset - 8;
                 code_left_to_apply_len = left_code;
                 result.push(last_byte);
-                if (0..20).contains(&result.len()) {}
                 code = code >> (8 - b_to_move);
                 last_byte = 0;
                 last_b_offset = 0;
@@ -143,26 +142,43 @@ impl<'a> Inflater<'a> {
     fn consume_code(&mut self) -> u16 {
         let mut current_code = 0;
         let mut code_len = 0;
-        let mut b_idx = self.consumed_bytes;
-        let mut offset = self.current_byte_bits_offset;
         loop {
-            let current_byte = self.bytes[b_idx];
-            let b_shifted = current_byte >> offset;
-            offset += 1;
-            if offset >= 8 {
-                offset = 0;
-                b_idx += 1;
-            }
-            let current_bit = b_shifted & 1;
+            let current_bit = self.consume_bit();
             current_code = current_code << 1;
             current_code = current_code | (current_bit as u16);
             code_len += 1;
             if let Some(value) = self.fixed_hf_gen.get_code_value(current_code, code_len) {
-                self.current_byte_bits_offset = offset;
-                self.consumed_bytes = b_idx;
+                // println!(
+                //     "consume_code:{current_code:0width$b},l{code_len},{value}({})",
+                //     value as u8 as char,
+                //     width = code_len,
+                // );
                 return value;
             }
         }
+    }
+    fn consume_bits(&mut self, n: usize) -> Vec<u8> {
+        let mut bits = vec![];
+        for _ in 0..n {
+            bits.push(self.consume_bit());
+        }
+        // bits.reverse();
+        bits
+    }
+    fn consume_bit(&mut self) -> u8 {
+        let mut b_idx = self.consumed_bytes;
+        let mut offset = self.current_byte_bits_offset;
+        let current_byte = self.bytes[b_idx];
+        let b_shifted = current_byte >> offset;
+        offset += 1;
+        if offset >= 8 {
+            offset = 0;
+            b_idx += 1;
+        }
+        let current_bit = b_shifted & 1;
+        self.current_byte_bits_offset = offset;
+        self.consumed_bytes = b_idx;
+        current_bit
     }
 }
 
@@ -185,12 +201,85 @@ fn inflate_block_fixed_compression(
         if value == 256 {
             break;
         } else if value > 256 {
-            todo!()
+            let l = if (257..265).contains(&value) {
+                (value - 254) as u8
+            } else if (265..269).contains(&value) {
+                let l = ((value - 260) * 2 + 1) as u8;
+                let next_bit = inflater.consume_bits(1);
+                l + bits_to_u8_msb_first(&next_bit)
+            } else {
+                todo!()
+            };
+            // let dist = inflater.consume_code();
+            let dist = inflater.consume_bits(5);
+            let dist = bits_to_u8_msb_first(&dist);
+            // println!("{value}l{l},d{dist}");
+            // println!("rlen:{}", result.len());
+            let dist = if (0..4).contains(&dist) {
+                let dist = dist + 1;
+                dist
+            } else if (4..6).contains(&dist) {
+                let dist = dist + (dist - 3);
+                let b = inflater.consume_bits(1);
+                let dist = dist + bits_to_u8_msb_first(&b);
+                dist
+            } else if (6..8).contains(&dist) {
+                let dist = dist + (dist - 5) * 3;
+                let b = inflater.consume_bits(2);
+                let dist = dist + bits_to_u8_msb_first(&b);
+                dist
+            } else if (8..10).contains(&dist) {
+                let dist = if dist == 8 { 17 } else { 25 };
+                let b = inflater.consume_bits(3);
+                let dist = dist + bits_to_u8_msb_first(&b);
+                dist
+            } else if (10..12).contains(&dist) {
+                let dist = if dist == 10 { 33 } else { 49 };
+                let b = inflater.consume_bits(4);
+                let dist = dist + bits_to_u8_msb_first(&b);
+                dist
+            } else if (12..14).contains(&dist) {
+                let dist = if dist == 12 { 65 } else { 97 };
+                let b = inflater.consume_bits(5);
+                let dist = dist + bits_to_u8_msb_first(&b);
+                dist
+            } else if (14..16).contains(&dist) {
+                let dist = if dist == 14 { 129 } else { 193 };
+                let b = inflater.consume_bits(6);
+                let dist = dist + bits_to_u8_msb_first(&b);
+                dist
+            } else {
+                todo!()
+            };
+            if dist > 0 {
+                println!("dist: {dist}");
+                let r_curr_idx = result.len() - dist as usize;
+                let initial_result_len = result.len();
+                println!("d traversing: {dist} from {r_curr_idx}");
+                let mut new_bytes = vec![];
+                for i in r_curr_idx..(r_curr_idx + l as usize) {
+                    new_bytes.push(result[i]);
+                    result.push(result[i]);
+                }
+                println!(
+                    "copied '{}' from {r_curr_idx} to {initial_result_len}",
+                    String::from_utf8_lossy(&new_bytes)
+                );
+            }
         }
         let value = value as u8;
         result.push(value);
     }
     return Ok((inflater.consumed_bytes + 1, result));
+}
+
+fn bits_to_u8_msb_first(bits: &[u8]) -> u8 {
+    let len = bits.len();
+    let mut sum = 0;
+    for i in 0..len {
+        sum |= bits[i] << (len - i - 1);
+    }
+    sum
 }
 
 #[derive(Debug, PartialEq)]
