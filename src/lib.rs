@@ -148,11 +148,6 @@ impl<'a> Inflater<'a> {
             current_code = current_code | (current_bit as u16);
             code_len += 1;
             if let Some(value) = self.fixed_hf_gen.get_code_value(current_code, code_len) {
-                // println!(
-                //     "consume_code:{current_code:0width$b},l{code_len},{value}({})",
-                //     value as u8 as char,
-                //     width = code_len,
-                // );
                 return value;
             }
         }
@@ -162,7 +157,13 @@ impl<'a> Inflater<'a> {
         for _ in 0..n {
             bits.push(self.consume_bit());
         }
-        // bits.reverse();
+        bits
+    }
+    fn consume_bits_reversed(&mut self, n: usize) -> Vec<u8> {
+        let mut bits = vec![0; n];
+        for i in (0..n).rev() {
+            bits[i] = self.consume_bit();
+        }
         bits
     }
     fn consume_bit(&mut self) -> u8 {
@@ -198,6 +199,7 @@ fn inflate_block_fixed_compression(
     let mut inflater = Inflater::new(bytes, block_data_start);
     loop {
         let value = inflater.consume_code();
+
         if value == 256 {
             break;
         } else if value > 256 {
@@ -205,7 +207,7 @@ fn inflate_block_fixed_compression(
                 (value - 254) as u8
             } else if (265..269).contains(&value) {
                 let l = ((value - 260) * 2 + 1) as u8;
-                let next_bit = inflater.consume_bits(1);
+                let next_bit = inflater.consume_bits_reversed(1);
                 l + bits_to_u8_msb_first(&next_bit)
             } else {
                 todo!()
@@ -213,34 +215,32 @@ fn inflate_block_fixed_compression(
             // let dist = inflater.consume_code();
             let dist = inflater.consume_bits(5);
             let dist = bits_to_u8_msb_first(&dist);
-            // println!("{value}l{l},d{dist}");
-            // println!("rlen:{}", result.len());
             let dist = if (0..4).contains(&dist) {
                 let dist = dist + 1;
                 dist
             } else if (4..6).contains(&dist) {
                 let dist = dist + (dist - 3);
-                let b = inflater.consume_bits(1);
+                let b = inflater.consume_bits_reversed(1);
                 let dist = dist + bits_to_u8_msb_first(&b);
                 dist
             } else if (6..8).contains(&dist) {
                 let dist = dist + (dist - 5) * 3;
-                let b = inflater.consume_bits(2);
+                let b = inflater.consume_bits_reversed(2);
                 let dist = dist + bits_to_u8_msb_first(&b);
-                dist
+                if dist == 11 { 10 } else { dist }
             } else if (8..10).contains(&dist) {
                 let dist = if dist == 8 { 17 } else { 25 };
-                let b = inflater.consume_bits(3);
+                let b = inflater.consume_bits_reversed(3);
                 let dist = dist + bits_to_u8_msb_first(&b);
                 dist
             } else if (10..12).contains(&dist) {
                 let dist = if dist == 10 { 33 } else { 49 };
-                let b = inflater.consume_bits(4);
+                let b = inflater.consume_bits_reversed(4);
                 let dist = dist + bits_to_u8_msb_first(&b);
                 dist
             } else if (12..14).contains(&dist) {
                 let dist = if dist == 12 { 65 } else { 97 };
-                let b = inflater.consume_bits(5);
+                let b = inflater.consume_bits_reversed(5);
                 let dist = dist + bits_to_u8_msb_first(&b);
                 dist
             } else if (14..16).contains(&dist) {
@@ -252,23 +252,15 @@ fn inflate_block_fixed_compression(
                 todo!()
             };
             if dist > 0 {
-                println!("dist: {dist}");
                 let r_curr_idx = result.len() - dist as usize;
-                let initial_result_len = result.len();
-                println!("d traversing: {dist} from {r_curr_idx}");
-                let mut new_bytes = vec![];
                 for i in r_curr_idx..(r_curr_idx + l as usize) {
-                    new_bytes.push(result[i]);
                     result.push(result[i]);
                 }
-                println!(
-                    "copied '{}' from {r_curr_idx} to {initial_result_len}",
-                    String::from_utf8_lossy(&new_bytes)
-                );
             }
+        } else {
+            let value = value as u8;
+            result.push(value);
         }
-        let value = value as u8;
-        result.push(value);
     }
     return Ok((inflater.consumed_bytes + 1, result));
 }

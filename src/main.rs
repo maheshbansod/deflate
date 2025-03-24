@@ -1,5 +1,5 @@
 use anyhow::Result;
-use deflate::{deflate, inflate};
+use deflate::inflate;
 
 fn main() -> Result<()> {
     let correct_text = "Some text. Oh text.. oh text oh text ooh.. yayyyy ayayayya.
@@ -13,29 +13,15 @@ fn main() -> Result<()> {
     }
     println!("inflating");
     let inflated = inflate(f)?;
-    println!("\ns:{}", String::from_utf8_lossy(&inflated).to_string());
-    let deflated = deflate(correct_text.as_bytes())?;
+    let inflated_s = String::from_utf8_lossy(&inflated).to_string();
+    println!("\ninflated: s:\n{}", inflated_s);
 
-    println!("\n\nmydeflated: ");
-    for (i, d) in deflated.iter().enumerate() {
-        print!("{d:b} ");
-        if f[i] != *d {
-            println!();
-            println!("{i}th byte unequal: md:{d:b},actual:{:b}", f[i]);
-            break;
-        }
+    println!("Are both equal?");
+    if correct_text == inflated_s {
+        println!("Yes!!");
+    } else {
+        println!("Nah, look again.");
     }
-    // println!();
-    // let inflated = inflate(&deflated)?;
-    // println!("s:{}", String::from_utf8_lossy(&inflated).to_string());
-    // let deflated = deflate(correct_text.as_bytes())?;
-    // println!("mydeflated: ");
-    // for (i, d) in deflated.iter().enumerate() {
-    //     print!("{d:0>8b} ");
-    //     // if f[i] != *d {
-    //     //     println!();
-    //     //     println!("{i}th byte unequal: md:{d:b},actual:{:b}", f[i]);
-    //     // }
-    // }
+
     Ok(())
 }
